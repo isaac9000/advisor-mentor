@@ -1,6 +1,6 @@
 # NVfp4 GEMV Autoresearch
 
-An autonomous agent that iteratively optimizes a CUDA kernel for batched NVfp4 matrix-vector multiplication on NVIDIA B200. Each iteration the agent makes exactly one change to `submission.py`, evaluates it on a B200 via Modal, logs the result, and stops. The outer loop drives the next iteration.
+An advisor-worker agent pair that iteratively optimizes a CUDA kernel for batched NVfp4 matrix-vector multiplication on NVIDIA B200. Each iteration the **advisor** reviews experiment history and proposes a strategic direction; the **worker** implements it, evaluates on a B200 via Modal, and logs the result.
 
 ## Task
 
@@ -30,12 +30,6 @@ Implement a batched GEMV kernel for NVfp4 (e2m1) inputs with fp8 (e4m3fn) block 
 
 ```bash
 uv sync
-
-# Configure Modal credentials
-uv run modal token set --token-id <token-id> --token-secret <token-secret>
-
-# Deploy the B200 evaluator (once, before any agent runs)
-uv run modal deploy eval_modal_nvfp4_gemv.py   # located in the autoresearch repo
 ```
 
 Create a `.env` file in the repo root:
@@ -53,34 +47,50 @@ AUTORESEARCH_MODEL=claude-opus-4-7   # optional, this is the default
 uv run nvfp4_gemv/agent.py --iterations 20
 ```
 
-Start from a specific baseline file instead of the current `submission.py`:
+Start from a specific baseline file:
 
 ```bash
-uv run nvfp4_gemv/agent.py --baseline path/to/baseline.py --iterations 20
+uv run nvfp4_gemv/agent.py --baseline nvfp4_gemv/baseline_v2.py --iterations 20
 ```
 
-Quick correctness check without a full benchmark:
+Use different models for advisor and worker:
 
 ```bash
-cd nvfp4_gemv
-uv run python run_eval.py submission.py -o results.json --mode test
+uv run nvfp4_gemv/agent.py --advisor-model claude-opus-4-8 --worker-model claude-sonnet-4-6 --iterations 20
+```
+
+In tmux (recommended for long runs):
+
+```bash
+tmux new-session -d -s agent "set -a && source .env && set +a && uv run nvfp4_gemv/agent.py --baseline nvfp4_gemv/baseline_v2.py --iterations 25 2>&1 | tee nvfp4_gemv/agent_run.log"
+tmux attach -t agent
+```
+
+Evaluate a baseline file without running the agent:
+
+```bash
+uv run nvfp4_gemv/run_eval.py nvfp4_gemv/baseline_v2.py -o results.json
 ```
 
 ## Structure
 
 ```
 nvfp4_gemv/
-├── agent.py        — agentic loop (LangChain + DeepAgents)
-├── program.md      — system prompt: task spec, constraints, optimization hints
-├── submission.py   — the kernel file the agent edits each iteration
-├── run_eval.py     — submits submission.py to the Modal B200 evaluator
-├── tools.py        — log_experiment and get_experiment_history tools
-└── runs/           — one directory per run: history, TSV log, plots, best submission
+├── agent.py            — advisor-worker agentic loop
+├── advisor_prompt.md   — advisor system prompt: strategy, comparison discipline
+├── worker_prompt.md    — worker system prompt: mandatory sequence, rules
+├── program.md          — original single-agent system prompt (kept for reference)
+├── submission.py       — the kernel file the worker edits each iteration
+├── run_eval.py         — submits submission.py to the Modal B200 evaluator
+├── tools.py            — log_experiment and get_experiment_history tools
+├── baseline_v2.py      — custom CUDA kernel baseline (21.3 µs geomean)
+├── baseline43.py       — torch._scaled_mm baseline (202.1 µs geomean)
+└── runs/               — one directory per run: history, TSV log, plots, best submission
 ```
 
 Each run directory contains:
 - `experiment_history.md` — full log of every attempt with code and result
 - `results.tsv` — tab-separated summary for plotting
-- `progress.png` / `iterations.png` — latency plots updated each iteration
+- `progress.png` — latency plot updated each iteration
 - `best_submission.py` — snapshot of the fastest kernel found
-- `conversation_history/` — full agent conversation saved on exit
+- `proposals.md` — advisor proposals for every iteration

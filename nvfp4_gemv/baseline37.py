@@ -514,7 +514,6 @@ _cuda_cflags = [
 ]
 
 custom_kernel_module = load_inline(
-    build_directory=__import__('tempfile').mkdtemp(prefix='gemv_build_'),
     name="custom_kernel_nvfp4_gemv",
     cpp_sources="""
 #include <torch/extension.h>
